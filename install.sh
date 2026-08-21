@@ -21,6 +21,11 @@ if (( cpu < need_cpu || mem < need_mem || disk < need_disk )); then
 fi
 
 if ! command -v docker >/dev/null; then curl -fsSL https://get.docker.com | sudo sh; fi
+docker_compose=(docker compose)
+if ! docker info >/dev/null 2>&1; then
+  sudo -n docker info >/dev/null 2>&1 || { echo "Docker is unavailable to this operator." >&2; exit 5; }
+  docker_compose=(sudo -n docker compose)
+fi
 sudo install -d -m 0700 "$INSTALL_ROOT" "$INSTALL_ROOT/secrets" "$INSTALL_ROOT/data/node" "$INSTALL_ROOT/data/worker" "$INSTALL_ROOT/gvm"
 sudo chown -R "$(id -u):$(id -g)" "$INSTALL_ROOT"
 sudo chown -R 10001:10001 "$INSTALL_ROOT/secrets" "$INSTALL_ROOT/data"
@@ -58,8 +63,8 @@ if [[ "$ROLE" != node ]]; then
   [[ "${GVM_COMPOSE_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] || { echo "signed release lacks a GVM manifest digest" >&2; exit 4; }
   curl -fsSLo "$INSTALL_ROOT/gvm/compose.yml" "$GVM_COMPOSE_URL"
   printf '%s  %s\n' "$GVM_COMPOSE_SHA256" "$INSTALL_ROOT/gvm/compose.yml" | sha256sum -c -
-  docker compose -p greenbone-community-edition -f "$INSTALL_ROOT/gvm/compose.yml" up -d
+  "${docker_compose[@]}" -p greenbone-community-edition -f "$INSTALL_ROOT/gvm/compose.yml" up -d
 fi
 
-docker compose --env-file "$INSTALL_ROOT/runtime.env" -f "$INSTALL_ROOT/compose.yml" up -d
+"${docker_compose[@]}" --env-file "$INSTALL_ROOT/runtime.env" -f "$INSTALL_ROOT/compose.yml" up -d
 echo "Argus ${ROLE} deployment started. The one-time code file is removed automatically after registration."
