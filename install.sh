@@ -21,9 +21,11 @@ if (( cpu < need_cpu || mem < need_mem || disk < need_disk )); then
 fi
 
 if ! command -v docker >/dev/null; then curl -fsSL https://get.docker.com | sudo sh; fi
+docker_cli=(docker)
 docker_compose=(docker compose)
 if ! docker info >/dev/null 2>&1; then
   sudo -n docker info >/dev/null 2>&1 || { echo "Docker is unavailable to this operator." >&2; exit 5; }
+  docker_cli=(sudo -n docker)
   docker_compose=(sudo -n docker compose)
 fi
 sudo install -d -m 0700 "$INSTALL_ROOT" "$INSTALL_ROOT/secrets" "$INSTALL_ROOT/data/node" "$INSTALL_ROOT/data/worker" "$INSTALL_ROOT/gvm"
@@ -63,7 +65,12 @@ if [[ "$ROLE" != node ]]; then
   [[ "${GVM_COMPOSE_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] || { echo "signed release lacks a GVM manifest digest" >&2; exit 4; }
   curl -fsSLo "$INSTALL_ROOT/gvm/compose.yml" "$GVM_COMPOSE_URL"
   printf '%s  %s\n' "$GVM_COMPOSE_SHA256" "$INSTALL_ROOT/gvm/compose.yml" | sha256sum -c -
-  "${docker_compose[@]}" -p greenbone-community-edition -f "$INSTALL_ROOT/gvm/compose.yml" up -d
+  "${docker_compose[@]}" -p greenbone-community-edition -f "$INSTALL_ROOT/gvm/compose.yml" up -d --wait --wait-timeout 900
+  gvmd_container="$("${docker_compose[@]}" -p greenbone-community-edition -f "$INSTALL_ROOT/gvm/compose.yml" ps -q gvmd)"
+  [[ -n "$gvmd_container" ]] || { echo "The GVM manager container is unavailable." >&2; exit 6; }
+  "${docker_cli[@]}" cp "$INSTALL_ROOT/secrets/gvm_password" "$gvmd_container:/tmp/argus-gvm-password"
+  "${docker_cli[@]}" exec -u 0 "$gvmd_container" sh -c 'chown gvmd:gvmd /tmp/argus-gvm-password && chmod 600 /tmp/argus-gvm-password'
+  "${docker_cli[@]}" exec -u gvmd "$gvmd_container" sh -c 'pw=$(cat /tmp/argus-gvm-password); rm -f /tmp/argus-gvm-password; exec gvmd --user=admin --new-password="$pw"' >/dev/null
 fi
 
 "${docker_compose[@]}" --env-file "$INSTALL_ROOT/runtime.env" -f "$INSTALL_ROOT/compose.yml" up -d
