@@ -65,9 +65,18 @@ if [[ "$ROLE" != node ]]; then
   [[ "${GVM_COMPOSE_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] || { echo "signed release lacks a GVM manifest digest" >&2; exit 4; }
   curl -fsSLo "$INSTALL_ROOT/gvm/compose.yml" "$GVM_COMPOSE_URL"
   printf '%s  %s\n' "$GVM_COMPOSE_SHA256" "$INSTALL_ROOT/gvm/compose.yml" | sha256sum -c -
-  "${docker_compose[@]}" -p greenbone-community-edition -f "$INSTALL_ROOT/gvm/compose.yml" up -d --wait --wait-timeout 900
-  gvmd_container="$("${docker_compose[@]}" -p greenbone-community-edition -f "$INSTALL_ROOT/gvm/compose.yml" ps -q gvmd)"
-  [[ -n "$gvmd_container" ]] || { echo "The GVM manager container is unavailable." >&2; exit 6; }
+  "${docker_compose[@]}" -p greenbone-community-edition -f "$INSTALL_ROOT/gvm/compose.yml" up -d
+  gvmd_container=""
+  gvmd_health=""
+  for _ in $(seq 1 180); do
+    gvmd_container="$("${docker_compose[@]}" -p greenbone-community-edition -f "$INSTALL_ROOT/gvm/compose.yml" ps -q gvmd)"
+    if [[ -n "$gvmd_container" ]]; then
+      gvmd_health="$("${docker_cli[@]}" inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$gvmd_container")"
+      [[ "$gvmd_health" == healthy ]] && break
+    fi
+    sleep 5
+  done
+  [[ "$gvmd_health" == healthy ]] || { echo "The GVM manager did not become healthy." >&2; exit 6; }
   "${docker_cli[@]}" cp "$INSTALL_ROOT/secrets/gvm_password" "$gvmd_container:/tmp/argus-gvm-password"
   "${docker_cli[@]}" exec -u 0 "$gvmd_container" sh -c 'chown gvmd:gvmd /tmp/argus-gvm-password && chmod 600 /tmp/argus-gvm-password'
   "${docker_cli[@]}" exec -u gvmd "$gvmd_container" sh -c 'pw=$(cat /tmp/argus-gvm-password); rm -f /tmp/argus-gvm-password; exec gvmd --user=admin --new-password="$pw"' >/dev/null
