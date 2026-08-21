@@ -27,6 +27,10 @@ jobs:
           gvm_sha="$(sed -n 's/^GVM_COMPOSE_SHA256=//p' release.env)"
           [[ "$gvm_sha" =~ ^[0-9a-f]{64}$ ]]
           printf '%s  %s\n' "$gvm_sha" gvm-compose.pinned.yml | sha256sum -c -
+          grep -Fq './secrets:/run/secrets' core.yml
+          grep -Fq './secrets:/run/secrets' scanner.yml
+          ! grep -Fq './secrets/bootstrap:/run/secrets/bootstrap' core.yml
+          ! grep -Fq './secrets/bootstrap:/run/secrets/bootstrap' scanner.yml
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2

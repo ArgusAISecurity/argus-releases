@@ -9,7 +9,7 @@ services:
       ARGUS_NODE_MODE: real
       ARGUS_NODE_IDENTITY_PATH: /data/node_identity.json
     volumes:
-      - ./secrets/bootstrap:/run/secrets/bootstrap
+      - ./secrets:/run/secrets
       - ./data/node:/data
     restart: unless-stopped
     logging: {options: {max-size: 10m, max-file: '3'}}

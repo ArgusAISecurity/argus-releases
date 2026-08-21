@@ -14,7 +14,7 @@ services:
       GVM_PORT_LIST_ID: ${GVM_PORT_LIST_ID:-33d0cd82-57c6-11e1-8ed1-406186ea4fc5}
       GVM_SCANNER_ID: ${GVM_SCANNER_ID:-08b69003-5fc2-4037-a479-93b440211c73}
     volumes:
-      - ./secrets/bootstrap:/run/secrets/bootstrap
+      - ./secrets:/run/secrets
       - ./secrets/gvm_password:/run/gvm-secrets/password:ro
       - ./data/worker:/work
       - gvmd_socket:/run/gvmd:ro
