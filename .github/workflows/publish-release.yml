@@ -31,13 +31,9 @@ jobs:
       - name: Sign and verify the immutable release manifest
         shell: bash
         run: |
-          cosign sign-blob --yes \
-            --output-signature release.env.sig \
-            --output-certificate release.env.pem \
-            release.env
+          cosign sign-blob --yes --bundle release.env.bundle.json release.env
           cosign verify-blob \
-            --certificate release.env.pem \
-            --signature release.env.sig \
+            --bundle release.env.bundle.json \
             --certificate-identity "https://github.com/ArgusAISecurity/argus-releases/.github/workflows/publish-release.yml@refs/tags/$GITHUB_REF_NAME" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             release.env
@@ -48,7 +44,7 @@ jobs:
         shell: bash
         run: |
           gh release create "$GITHUB_REF_NAME" \
-            release.env release.env.sig release.env.pem \
+            release.env release.env.bundle.json \
             install.sh core.yml compact.yml scanner.yml gvm-compose.pinned.yml \
             --title "Argus $GITHUB_REF_NAME" \
             --notes "Signed Argus customer deployment artifacts. Container images are digest-pinned in release.env."

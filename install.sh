@@ -26,15 +26,14 @@ sudo chown -R "$(id -u):$(id -g)" "$INSTALL_ROOT"
 sudo chown -R 10001:10001 "$INSTALL_ROOT/secrets" "$INSTALL_ROOT/data"
 
 curl -fsSLo "$INSTALL_ROOT/release.env" "$RELEASE_BASE/release.env"
-curl -fsSLo "$INSTALL_ROOT/release.env.sig" "$RELEASE_BASE/release.env.sig"
-curl -fsSLo "$INSTALL_ROOT/release.env.pem" "$RELEASE_BASE/release.env.pem"
+curl -fsSLo "$INSTALL_ROOT/release.env.bundle.json" "$RELEASE_BASE/release.env.bundle.json"
 if ! command -v cosign >/dev/null; then
   COSIGN_VERSION="v3.1.3"
   curl -fsSLo "$INSTALL_ROOT/cosign" "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64"
   chmod 0755 "$INSTALL_ROOT/cosign"
   COSIGN="$INSTALL_ROOT/cosign"
 else COSIGN="$(command -v cosign)"; fi
-"$COSIGN" verify-blob --certificate "$INSTALL_ROOT/release.env.pem" --signature "$INSTALL_ROOT/release.env.sig" --certificate-identity-regexp '^https://github\.com/ArgusAISecurity/argus-releases/\.github/workflows/publish-release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$' --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' "$INSTALL_ROOT/release.env"
+"$COSIGN" verify-blob --bundle "$INSTALL_ROOT/release.env.bundle.json" --certificate-identity-regexp '^https://github\.com/ArgusAISecurity/argus-releases/\.github/workflows/publish-release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$' --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' "$INSTALL_ROOT/release.env"
 set -a; source "$INSTALL_ROOT/release.env"; set +a
 for image in ARGUS_NODE_IMAGE ARGUS_VULNERABILITY_WORKER_IMAGE; do
   value="${!image:-}"; [[ "$value" == *@sha256:* ]] || { echo "$image must be digest pinned" >&2; exit 4; }
