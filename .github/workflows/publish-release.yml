@@ -1,0 +1,54 @@
+name: Publish signed customer release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    if: github.repository == 'ArgusAISecurity/argus-releases'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out release artifacts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Validate release boundary
+        shell: bash
+        run: |
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          grep -Fx "GVM_COMPOSE_URL=https://github.com/ArgusAISecurity/argus-releases/releases/download/$GITHUB_REF_NAME/gvm-compose.pinned.yml" release.env
+          grep -Eq '^ARGUS_NODE_IMAGE=ghcr\.io/argusaisecurity/argus-node@sha256:[0-9a-f]{64}$' release.env
+          grep -Eq '^ARGUS_VULNERABILITY_WORKER_IMAGE=ghcr\.io/argusaisecurity/argus-vulnerability-worker@sha256:[0-9a-f]{64}$' release.env
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Sign and verify the immutable release manifest
+        shell: bash
+        run: |
+          cosign sign-blob --yes \
+            --output-signature release.env.sig \
+            --output-certificate release.env.pem \
+            release.env
+          cosign verify-blob \
+            --certificate release.env.pem \
+            --signature release.env.sig \
+            --certificate-identity "https://github.com/ArgusAISecurity/argus-releases/.github/workflows/publish-release.yml@refs/tags/$GITHUB_REF_NAME" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            release.env
+
+      - name: Publish GitHub Release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            release.env release.env.sig release.env.pem \
+            install.sh core.yml compact.yml scanner.yml gvm-compose.pinned.yml \
+            --title "Argus $GITHUB_REF_NAME" \
+            --notes "Signed Argus customer deployment artifacts. Container images are digest-pinned in release.env."

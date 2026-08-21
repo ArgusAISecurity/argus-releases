@@ -1,0 +1,26 @@
+services:
+  vulnerability-worker:
+    image: ${ARGUS_VULNERABILITY_WORKER_IMAGE}
+    network_mode: host
+    environment:
+      ARGUS_BACKEND_URL: ${ARGUS_PLATFORM_URL}/api
+      ARGUS_VULNERABILITY_BOOTSTRAP_TOKEN_FILE: /run/secrets/bootstrap
+      ARGUS_VULNERABILITY_PROVIDER: gvm
+      ARGUS_VULNERABILITY_WORK_PATH: /work
+      GVM_SOCKET_PATH: /run/gvmd/gvmd.sock
+      GVM_USERNAME: ${GVM_USERNAME:-admin}
+      GVM_PASSWORD_FILE: /run/gvm-secrets/password
+      GVM_SCAN_CONFIG_ID: ${GVM_SCAN_CONFIG_ID:-daba56c8-73ec-11df-a475-002264764cea}
+      GVM_PORT_LIST_ID: ${GVM_PORT_LIST_ID:-33d0cd82-57c6-11e1-8ed1-406186ea4fc5}
+      GVM_SCANNER_ID: ${GVM_SCANNER_ID:-08b69003-5fc2-4037-a479-93b440211c73}
+    volumes:
+      - ./secrets/bootstrap:/run/secrets/bootstrap
+      - ./secrets/gvm_password:/run/gvm-secrets/password:ro
+      - ./data/worker:/work
+      - gvmd_socket:/run/gvmd:ro
+    restart: unless-stopped
+    logging: {options: {max-size: 10m, max-file: '3'}}
+volumes:
+  gvmd_socket:
+    external: true
+    name: greenbone-community-edition_gvmd_socket_vol

@@ -1,0 +1,15 @@
+services:
+  node:
+    image: ${ARGUS_NODE_IMAGE}
+    network_mode: host
+    cap_add: [NET_RAW]
+    environment:
+      ARGUS_BACKEND_URL: ${ARGUS_PLATFORM_URL}/api
+      ARGUS_BOOTSTRAP_TOKEN_FILE: /run/secrets/bootstrap
+      ARGUS_NODE_MODE: real
+      ARGUS_NODE_IDENTITY_PATH: /data/node_identity.json
+    volumes:
+      - ./secrets/bootstrap:/run/secrets/bootstrap
+      - ./data/node:/data
+    restart: unless-stopped
+    logging: {options: {max-size: 10m, max-file: '3'}}
