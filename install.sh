@@ -5,6 +5,15 @@ umask 077
 ROLE="${1:-}"
 case "$ROLE" in node|compact|vulnerability-worker) ;; *) echo "Usage: install.sh {node|compact|vulnerability-worker}" >&2; exit 2;; esac
 
+as_root=()
+if (( EUID != 0 )); then
+  if ! command -v sudo >/dev/null 2>&1; then
+    echo "This verified installer needs root privileges. Re-run the generated Argus command on a host with sudo, or run it as root." >&2
+    exit 5
+  fi
+  as_root=(sudo)
+fi
+
 PLATFORM_URL="${ARGUS_PLATFORM_URL:-__ARGUS_PLATFORM_URL__}"
 RELEASE_BASE="${ARGUS_RELEASE_BASE_URL:-__ARGUS_RELEASE_BASE_URL__}"
 INSTALL_ROOT="${ARGUS_INSTALL_ROOT:-/opt/argus-customer}"
@@ -20,17 +29,52 @@ if (( cpu < need_cpu || mem < need_mem || disk < need_disk )); then
   echo "Host does not meet the ${ROLE} baseline: need ${need_cpu} vCPU, ${need_mem} GiB RAM, ${need_disk} GiB free disk; found ${cpu}/${mem}/${disk}." >&2; exit 3
 fi
 
-if ! command -v docker >/dev/null; then curl -fsSL https://get.docker.com | sudo sh; fi
+if ! command -v docker >/dev/null 2>&1; then
+  cat >&2 <<'EOF'
+Docker is not installed.
+Install Docker Engine and the Docker Compose plugin using your distribution's signed package repository, then rerun this verified Argus installer.
+Ubuntu/Kali operators can begin with: sudo apt-get update
+Do not pipe a remote Docker installation script into sudo.
+EOF
+  exit 5
+fi
 docker_cli=(docker)
 docker_compose=(docker compose)
-if ! docker info >/dev/null 2>&1; then
-  sudo -n docker info >/dev/null 2>&1 || { echo "Docker is unavailable to this operator." >&2; exit 5; }
-  docker_cli=(sudo -n docker)
-  docker_compose=(sudo -n docker compose)
+docker_error=""
+if ! docker_error="$(docker info 2>&1)"; then
+  if grep -Eqi 'permission denied|access denied|connect: permission' <<<"$docker_error"; then
+    if (( EUID != 0 )) && sudo -n docker info >/dev/null 2>&1; then
+      docker_cli=(sudo -n docker)
+      docker_compose=(sudo -n docker compose)
+      echo "Docker is available through sudo; Argus will use that protected path for this installation." >&2
+    else
+      cat >&2 <<'EOF'
+Docker is installed and running, but this operator cannot access its socket.
+Use the portal-generated verified command, which executes the installer under sudo.
+Adding an account to the docker group is an alternative only when locally approved; docker-group membership grants effectively root-equivalent privilege on this host.
+EOF
+      exit 5
+    fi
+  elif grep -Eqi 'cannot connect to the docker daemon|is the docker daemon running|connection refused|no such file or directory' <<<"$docker_error"; then
+    cat >&2 <<'EOF'
+Docker is installed, but the Docker service is unavailable.
+Start it with: sudo systemctl enable --now docker
+Then verify it with: sudo docker info
+EOF
+    exit 5
+  else
+    echo "Docker could not be inspected: $docker_error" >&2
+    echo "Verify the service with: sudo docker info" >&2
+    exit 5
+  fi
 fi
-sudo install -d -m 0700 "$INSTALL_ROOT" "$INSTALL_ROOT/secrets" "$INSTALL_ROOT/data/node" "$INSTALL_ROOT/data/worker" "$INSTALL_ROOT/gvm"
-sudo chown -R "$(id -u):$(id -g)" "$INSTALL_ROOT"
-sudo chown -R 10001:10001 "$INSTALL_ROOT/secrets" "$INSTALL_ROOT/data"
+if ! "${docker_compose[@]}" version >/dev/null 2>&1; then
+  echo "Docker is running, but the Docker Compose plugin is unavailable. Install docker-compose-plugin from your distribution's signed package repository, then rerun this installer." >&2
+  exit 5
+fi
+"${as_root[@]}" install -d -m 0700 "$INSTALL_ROOT" "$INSTALL_ROOT/secrets" "$INSTALL_ROOT/data/node" "$INSTALL_ROOT/data/worker" "$INSTALL_ROOT/gvm"
+"${as_root[@]}" chown -R "$(id -u):$(id -g)" "$INSTALL_ROOT"
+"${as_root[@]}" chown -R 10001:10001 "$INSTALL_ROOT/secrets" "$INSTALL_ROOT/data"
 
 curl -fsSLo "$INSTALL_ROOT/release.env" "$RELEASE_BASE/release.env"
 curl -fsSLo "$INSTALL_ROOT/release.env.bundle.json" "$RELEASE_BASE/release.env.bundle.json"
@@ -48,7 +92,7 @@ done
 
 read -rsp "One-time deployment code: " bootstrap_code; echo
 [[ -n "$bootstrap_code" ]] || { echo "A deployment code is required." >&2; exit 2; }
-printf '%s' "$bootstrap_code" | sudo install -o 10001 -g 10001 -m 0600 /dev/stdin "$INSTALL_ROOT/secrets/bootstrap"
+printf '%s' "$bootstrap_code" | "${as_root[@]}" install -o 10001 -g 10001 -m 0600 /dev/stdin "$INSTALL_ROOT/secrets/bootstrap"
 unset bootstrap_code
 printf 'ARGUS_PLATFORM_URL=%s\nARGUS_NODE_IMAGE=%s\nARGUS_VULNERABILITY_WORKER_IMAGE=%s\n' "$PLATFORM_URL" "$ARGUS_NODE_IMAGE" "$ARGUS_VULNERABILITY_WORKER_IMAGE" > "$INSTALL_ROOT/runtime.env"
 
@@ -60,7 +104,7 @@ curl -fsSLo "$INSTALL_ROOT/compose.yml" "$RELEASE_BASE/$compose_name"
 if [[ "$ROLE" != node ]]; then
   read -rsp "GVM admin password configured for this scanner: " gvm_password; echo
   [[ -n "$gvm_password" ]] || { echo "The GVM password is required." >&2; exit 2; }
-  printf '%s' "$gvm_password" | sudo install -o 10001 -g 10001 -m 0600 /dev/stdin "$INSTALL_ROOT/secrets/gvm_password"
+  printf '%s' "$gvm_password" | "${as_root[@]}" install -o 10001 -g 10001 -m 0600 /dev/stdin "$INSTALL_ROOT/secrets/gvm_password"
   unset gvm_password
   [[ "${GVM_COMPOSE_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] || { echo "signed release lacks a GVM manifest digest" >&2; exit 4; }
   curl -fsSLo "$INSTALL_ROOT/gvm/compose.yml" "$GVM_COMPOSE_URL"
