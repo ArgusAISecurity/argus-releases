@@ -121,9 +121,13 @@ if [[ "$ROLE" != node ]]; then
     sleep 5
   done
   [[ "$gvmd_health" == healthy ]] || { echo "The GVM manager did not become healthy." >&2; exit 6; }
-  "${docker_cli[@]}" cp "$INSTALL_ROOT/secrets/gvm_password" "$gvmd_container:/tmp/argus-gvm-password"
-  "${docker_cli[@]}" exec -u 0 "$gvmd_container" sh -c 'chown gvmd:gvmd /tmp/argus-gvm-password && chmod 600 /tmp/argus-gvm-password'
-  "${docker_cli[@]}" exec -u gvmd "$gvmd_container" sh -c 'pw=$(cat /tmp/argus-gvm-password); rm -f /tmp/argus-gvm-password; exec gvmd --user=admin --new-password="$pw"' >/dev/null
+  # Some gvmd images contain symlinked runtime paths that make `docker cp`
+  # reject even an unrelated /tmp destination. Stream the protected host file
+  # over stdin instead; the password never enters the host command line or a
+  # temporary container file.
+  "${as_root[@]}" cat "$INSTALL_ROOT/secrets/gvm_password" \
+    | "${docker_cli[@]}" exec -i -u gvmd "$gvmd_container" sh -c \
+      'pw=$(cat); exec gvmd --user=admin --new-password="$pw"' >/dev/null
 fi
 
 "${docker_compose[@]}" --env-file "$INSTALL_ROOT/runtime.env" -f "$INSTALL_ROOT/compose.yml" up -d
