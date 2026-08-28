@@ -4,6 +4,12 @@ umask 077
 
 ROLE="${1:-}"
 case "$ROLE" in node|compact|vulnerability-worker) ;; *) echo "Usage: install.sh {node|compact|vulnerability-worker}" >&2; exit 2;; esac
+IDENTITY_MODE="${2:-}"
+case "$IDENTITY_MODE" in
+  "") ;;
+  --reuse-existing-identity|--replace-identity) ;;
+  *) echo "Usage: install.sh {node|compact|vulnerability-worker} [--reuse-existing-identity|--replace-identity]" >&2; exit 2;;
+esac
 
 as_root=()
 if (( EUID != 0 )); then
@@ -72,6 +78,75 @@ if ! "${docker_compose[@]}" version >/dev/null 2>&1; then
   echo "Docker is running, but the Docker Compose plugin is unavailable. Install docker-compose-plugin from your distribution's signed package repository, then rerun this installer." >&2
   exit 5
 fi
+
+# A deployment code is bound to one specific Assessment Environment, while
+# the persisted component identity remains bound to the environment that
+# originally redeemed its code. Silently preferring an old identity makes a
+# rerun appear successful even though the newly selected environment remains
+# in "Setting up". Require the operator to state whether this is an in-place
+# software refresh or an intentional identity replacement.
+component_data_dirs=()
+component_services=()
+if [[ "$ROLE" == node || "$ROLE" == compact ]]; then
+  component_data_dirs+=("$INSTALL_ROOT/data/node")
+  component_services+=(node)
+fi
+if [[ "$ROLE" == vulnerability-worker || "$ROLE" == compact ]]; then
+  component_data_dirs+=("$INSTALL_ROOT/data/worker")
+  component_services+=(vulnerability-worker)
+fi
+
+existing_identity=false
+for data_dir in "${component_data_dirs[@]}"; do
+  if [[ -f "$data_dir/node_identity.json" || -f "$data_dir/identity.json" ]]; then
+    existing_identity=true
+    break
+  fi
+done
+
+reuse_existing_identity=false
+if [[ "$existing_identity" == true ]]; then
+  if [[ "$IDENTITY_MODE" == --reuse-existing-identity ]]; then
+    reuse_existing_identity=true
+    echo "Using the existing Argus component identity for an in-place software refresh." >&2
+  elif [[ "$IDENTITY_MODE" == --replace-identity ]]; then
+    archive_stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    archive_root="$INSTALL_ROOT/data/identity-archive/$archive_stamp"
+    "${as_root[@]}" install -d -m 0700 "$archive_root"
+    for index in "${!component_data_dirs[@]}"; do
+      data_dir="${component_data_dirs[$index]}"
+      service="${component_services[$index]}"
+      if [[ ! -f "$data_dir/node_identity.json" && ! -f "$data_dir/identity.json" ]]; then
+        continue
+      fi
+      container_ids="$("${docker_cli[@]}" ps -aq \
+        --filter "label=com.docker.compose.project.working_dir=$INSTALL_ROOT" \
+        --filter "label=com.docker.compose.service=$service")"
+      if [[ -n "$container_ids" ]]; then
+        # Replacement is an explicit operator action and must only be used
+        # after confirming the component is idle. Stop only this component;
+        # the Greenbone project and persistent feed/database volumes remain.
+        # shellcheck disable=SC2086
+        "${docker_cli[@]}" stop $container_ids >/dev/null
+      fi
+      "${as_root[@]}" mv "$data_dir" "$archive_root/$service"
+      "${as_root[@]}" install -d -o 10001 -g 10001 -m 0700 "$data_dir"
+    done
+    echo "Archived the previous component identity under $archive_root; GVM feed and database state were preserved." >&2
+  else
+    cat >&2 <<EOF
+An existing Argus component identity is already installed under $INSTALL_ROOT.
+It may belong to a different Assessment Environment, so this installer will not silently reuse it with a new deployment code.
+For an in-place image refresh, rerun with --reuse-existing-identity.
+After confirming no assessment or deep scan is active, rerun with --replace-identity to archive the old identity and register this host to the new environment.
+EOF
+    exit 7
+  fi
+elif [[ "$IDENTITY_MODE" == --reuse-existing-identity ]]; then
+  echo "No existing Argus component identity is available to reuse." >&2
+  exit 7
+fi
+
 "${as_root[@]}" install -d -m 0700 "$INSTALL_ROOT" "$INSTALL_ROOT/secrets" "$INSTALL_ROOT/data/node" "$INSTALL_ROOT/data/worker" "$INSTALL_ROOT/gvm"
 "${as_root[@]}" chown -R "$(id -u):$(id -g)" "$INSTALL_ROOT"
 "${as_root[@]}" chown -R 10001:10001 "$INSTALL_ROOT/secrets" "$INSTALL_ROOT/data"
@@ -90,10 +165,12 @@ for image in ARGUS_NODE_IMAGE ARGUS_VULNERABILITY_WORKER_IMAGE; do
   value="${!image:-}"; [[ "$value" == *@sha256:* ]] || { echo "$image must be digest pinned" >&2; exit 4; }
 done
 
-read -rsp "One-time deployment code: " bootstrap_code; echo
-[[ -n "$bootstrap_code" ]] || { echo "A deployment code is required." >&2; exit 2; }
-printf '%s' "$bootstrap_code" | "${as_root[@]}" install -o 10001 -g 10001 -m 0600 /dev/stdin "$INSTALL_ROOT/secrets/bootstrap"
-unset bootstrap_code
+if [[ "$reuse_existing_identity" != true ]]; then
+  read -rsp "One-time deployment code: " bootstrap_code; echo
+  [[ -n "$bootstrap_code" ]] || { echo "A deployment code is required." >&2; exit 2; }
+  printf '%s' "$bootstrap_code" | "${as_root[@]}" install -o 10001 -g 10001 -m 0600 /dev/stdin "$INSTALL_ROOT/secrets/bootstrap"
+  unset bootstrap_code
+fi
 printf 'ARGUS_PLATFORM_URL=%s\nARGUS_NODE_IMAGE=%s\nARGUS_VULNERABILITY_WORKER_IMAGE=%s\n' "$PLATFORM_URL" "$ARGUS_NODE_IMAGE" "$ARGUS_VULNERABILITY_WORKER_IMAGE" > "$INSTALL_ROOT/runtime.env"
 
 compose_name=core.yml
