@@ -97,8 +97,17 @@ if [[ "$ROLE" == vulnerability-worker || "$ROLE" == compact ]]; then
 fi
 
 existing_identity=false
+component_identity_exists() {
+  local data_dir="$1"
+  "${as_root[@]}" test -f "$data_dir/node_identity.json" || \
+    "${as_root[@]}" test -f "$data_dir/identity.json"
+}
 for data_dir in "${component_data_dirs[@]}"; do
-  if [[ -f "$data_dir/node_identity.json" || -f "$data_dir/identity.json" ]]; then
+  # Component data is intentionally owned by the container account and may
+  # not be traversable by the interactive operator. Use the same protected
+  # privilege path selected for installation instead of treating EACCES as a
+  # missing identity.
+  if component_identity_exists "$data_dir"; then
     existing_identity=true
     break
   fi
@@ -116,7 +125,7 @@ if [[ "$existing_identity" == true ]]; then
     for index in "${!component_data_dirs[@]}"; do
       data_dir="${component_data_dirs[$index]}"
       service="${component_services[$index]}"
-      if [[ ! -f "$data_dir/node_identity.json" && ! -f "$data_dir/identity.json" ]]; then
+      if ! component_identity_exists "$data_dir"; then
         continue
       fi
       container_ids="$("${docker_cli[@]}" ps -aq \
