@@ -32,7 +32,7 @@ if [[ "$ROLE" == compact ]]; then need_cpu=4; need_mem=16; need_disk=60; fi
 if [[ "$ROLE" == vulnerability-worker ]]; then need_cpu=4; need_mem=6; need_disk=60; fi
 cpu="$(nproc)"; mem="$(awk '/MemTotal/{print int($2/1024/1024)}' /proc/meminfo)"; disk="$(df -BG --output=avail /opt 2>/dev/null | tail -1 | tr -dc '0-9')"
 if (( cpu < need_cpu || mem < need_mem || disk < need_disk )); then
-  echo "Host does not meet the ${ROLE} baseline: need ${need_cpu} vCPU, ${need_mem} GiB usable RAM, ${need_disk} GiB free disk; found ${cpu}/${mem}/${disk}." >&2; exit 3
+  echo "Host does not meet the ${ROLE} baseline: need ${need_cpu} vCPU, ${need_mem} GiB total installed RAM (MemTotal), ${need_disk} GiB free disk; found ${cpu}/${mem}/${disk}." >&2; exit 3
 fi
 
 if ! command -v docker >/dev/null 2>&1; then
