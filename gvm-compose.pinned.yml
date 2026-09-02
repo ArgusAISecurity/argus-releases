@@ -2,7 +2,7 @@ name: greenbone-community-edition
 
 services:
   vulnerability-tests:
-    image: registry.community.greenbone.net/community/vulnerability-tests@sha256:75fbfae2a83b2c29c0178581a99a7f5de8d9dc720b48c224c8deb870694eb787
+    image: registry.community.greenbone.net/community/vulnerability-tests@sha256:bc6d91f52c292cad15e0e356ffdd0a4d7cc3f35e048531372786dcd3a8112f85
     environment:
       FEED_RELEASE: "24.10"
       KEEP_ALIVE: 1
@@ -10,21 +10,21 @@ services:
       - vt_data_vol:/mnt
 
   notus-data:
-    image: registry.community.greenbone.net/community/notus-data@sha256:0709a2f18f3a10e476426fda302a37bb6c22e10a4d68689c55f4aa5c3fae9c91
+    image: registry.community.greenbone.net/community/notus-data@sha256:7f6bc99bc2e061dbe068250bf926757b8a4eac33fa803472dd264ab917fdcb34
     environment:
       KEEP_ALIVE: 1
     volumes:
       - notus_data_vol:/mnt
 
   scap-data:
-    image: registry.community.greenbone.net/community/scap-data@sha256:f6b1b834d7f792ddb637794fec4d0bab5f7f3b9042e4df83141149882e26a16a
+    image: registry.community.greenbone.net/community/scap-data@sha256:28e8ba4cf953e8582c38512d21f983e4712a7c9f96d142f89257e9cd8cb7f9da
     environment:
       KEEP_ALIVE: 1
     volumes:
       - scap_data_vol:/mnt
 
   cert-bund-data:
-    image: registry.community.greenbone.net/community/cert-bund-data@sha256:643a80827d65f391db9cd7f51a36e776a93b81b851b9609147ff90da0315eb08
+    image: registry.community.greenbone.net/community/cert-bund-data@sha256:2d77c979de0a4e5d98e3a4dfe135135c09715304f068de2f575956c023985341
     environment:
       KEEP_ALIVE: 1
     volumes:
@@ -41,7 +41,7 @@ services:
         condition: service_healthy
 
   data-objects:
-    image: registry.community.greenbone.net/community/data-objects@sha256:dbe3b01436cdd3d4917813adc151fbaf2524d62646f7f5f300e538e4ef13e082
+    image: registry.community.greenbone.net/community/data-objects@sha256:f911eb506e7dce91af33800348aeaa073268c0e4ee0ab5ab62ba0c5a9df55f1c
     environment:
       FEED_RELEASE: "24.10"
       KEEP_ALIVE: 1
@@ -49,7 +49,7 @@ services:
       - data_objects_vol:/mnt
 
   report-formats:
-    image: registry.community.greenbone.net/community/report-formats@sha256:2f2e755d540fa12ff183633a60e9d6fd1bceb9ae83dea4244757e373071f0f87
+    image: registry.community.greenbone.net/community/report-formats@sha256:9184707dbb983304563be5e968b7efca5ac0519646004e979ca89e16e204af5a
     environment:
       FEED_RELEASE: "24.10"
       KEEP_ALIVE: 1
