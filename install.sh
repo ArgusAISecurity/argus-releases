@@ -4,6 +4,21 @@ umask 077
 
 ROLE="${1:-}"
 case "$ROLE" in node|compact|vulnerability-worker) ;; *) echo "Usage: install.sh {node|compact|vulnerability-worker}" >&2; exit 2;; esac
+IDENTITY_MODE="${2:-}"
+case "$IDENTITY_MODE" in
+  "") ;;
+  --reuse-existing-identity|--replace-identity) ;;
+  *) echo "Usage: install.sh {node|compact|vulnerability-worker} [--reuse-existing-identity|--replace-identity]" >&2; exit 2;;
+esac
+
+as_root=()
+if (( EUID != 0 )); then
+  if ! command -v sudo >/dev/null 2>&1; then
+    echo "This verified installer needs root privileges. Re-run the generated Argus command on a host with sudo, or run it as root." >&2
+    exit 5
+  fi
+  as_root=(sudo)
+fi
 
 PLATFORM_URL="${ARGUS_PLATFORM_URL:-__ARGUS_PLATFORM_URL__}"
 RELEASE_BASE="${ARGUS_RELEASE_BASE_URL:-__ARGUS_RELEASE_BASE_URL__}"
@@ -14,16 +29,136 @@ fi
 
 need_cpu=2; need_mem=4; need_disk=20
 if [[ "$ROLE" == compact ]]; then need_cpu=4; need_mem=16; need_disk=60; fi
-if [[ "$ROLE" == vulnerability-worker ]]; then need_cpu=4; need_mem=8; need_disk=60; fi
+if [[ "$ROLE" == vulnerability-worker ]]; then need_cpu=4; need_mem=6; need_disk=60; fi
 cpu="$(nproc)"; mem="$(awk '/MemTotal/{print int($2/1024/1024)}' /proc/meminfo)"; disk="$(df -BG --output=avail /opt 2>/dev/null | tail -1 | tr -dc '0-9')"
 if (( cpu < need_cpu || mem < need_mem || disk < need_disk )); then
-  echo "Host does not meet the ${ROLE} baseline: need ${need_cpu} vCPU, ${need_mem} GiB RAM, ${need_disk} GiB free disk; found ${cpu}/${mem}/${disk}." >&2; exit 3
+  echo "Host does not meet the ${ROLE} baseline: need ${need_cpu} vCPU, ${need_mem} GiB total installed RAM (MemTotal), ${need_disk} GiB free disk; found ${cpu}/${mem}/${disk}." >&2; exit 3
 fi
 
-if ! command -v docker >/dev/null; then curl -fsSL https://get.docker.com | sudo sh; fi
-sudo install -d -m 0700 "$INSTALL_ROOT" "$INSTALL_ROOT/secrets" "$INSTALL_ROOT/data/node" "$INSTALL_ROOT/data/worker" "$INSTALL_ROOT/gvm"
-sudo chown -R "$(id -u):$(id -g)" "$INSTALL_ROOT"
-sudo chown -R 10001:10001 "$INSTALL_ROOT/secrets" "$INSTALL_ROOT/data"
+if ! command -v docker >/dev/null 2>&1; then
+  cat >&2 <<'EOF'
+Docker is not installed.
+Install Docker Engine and the Docker Compose plugin using your distribution's signed package repository, then rerun this verified Argus installer.
+Ubuntu/Kali operators can begin with: sudo apt-get update
+Do not pipe a remote Docker installation script into sudo.
+EOF
+  exit 5
+fi
+docker_cli=(docker)
+docker_compose=(docker compose)
+docker_error=""
+if ! docker_error="$(docker info 2>&1)"; then
+  if grep -Eqi 'permission denied|access denied|connect: permission' <<<"$docker_error"; then
+    if (( EUID != 0 )) && sudo -n docker info >/dev/null 2>&1; then
+      docker_cli=(sudo -n docker)
+      docker_compose=(sudo -n docker compose)
+      echo "Docker is available through sudo; Argus will use that protected path for this installation." >&2
+    else
+      cat >&2 <<'EOF'
+Docker is installed and running, but this operator cannot access its socket.
+Use the portal-generated verified command, which executes the installer under sudo.
+Adding an account to the docker group is an alternative only when locally approved; docker-group membership grants effectively root-equivalent privilege on this host.
+EOF
+      exit 5
+    fi
+  elif grep -Eqi 'cannot connect to the docker daemon|is the docker daemon running|connection refused|no such file or directory' <<<"$docker_error"; then
+    cat >&2 <<'EOF'
+Docker is installed, but the Docker service is unavailable.
+Start it with: sudo systemctl enable --now docker
+Then verify it with: sudo docker info
+EOF
+    exit 5
+  else
+    echo "Docker could not be inspected: $docker_error" >&2
+    echo "Verify the service with: sudo docker info" >&2
+    exit 5
+  fi
+fi
+if ! "${docker_compose[@]}" version >/dev/null 2>&1; then
+  echo "Docker is running, but the Docker Compose plugin is unavailable. Install docker-compose-plugin from your distribution's signed package repository, then rerun this installer." >&2
+  exit 5
+fi
+
+# A deployment code is bound to one specific Assessment Environment, while
+# the persisted component identity remains bound to the environment that
+# originally redeemed its code. Silently preferring an old identity makes a
+# rerun appear successful even though the newly selected environment remains
+# in "Setting up". Require the operator to state whether this is an in-place
+# software refresh or an intentional identity replacement.
+component_data_dirs=()
+component_services=()
+if [[ "$ROLE" == node || "$ROLE" == compact ]]; then
+  component_data_dirs+=("$INSTALL_ROOT/data/node")
+  component_services+=(node)
+fi
+if [[ "$ROLE" == vulnerability-worker || "$ROLE" == compact ]]; then
+  component_data_dirs+=("$INSTALL_ROOT/data/worker")
+  component_services+=(vulnerability-worker)
+fi
+
+existing_identity=false
+component_identity_exists() {
+  local data_dir="$1"
+  "${as_root[@]}" test -f "$data_dir/node_identity.json" || \
+    "${as_root[@]}" test -f "$data_dir/identity.json"
+}
+for data_dir in "${component_data_dirs[@]}"; do
+  # Component data is intentionally owned by the container account and may
+  # not be traversable by the interactive operator. Use the same protected
+  # privilege path selected for installation instead of treating EACCES as a
+  # missing identity.
+  if component_identity_exists "$data_dir"; then
+    existing_identity=true
+    break
+  fi
+done
+
+reuse_existing_identity=false
+if [[ "$existing_identity" == true ]]; then
+  if [[ "$IDENTITY_MODE" == --reuse-existing-identity ]]; then
+    reuse_existing_identity=true
+    echo "Using the existing Argus component identity for an in-place software refresh." >&2
+  elif [[ "$IDENTITY_MODE" == --replace-identity ]]; then
+    archive_stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    archive_root="$INSTALL_ROOT/data/identity-archive/$archive_stamp"
+    "${as_root[@]}" install -d -m 0700 "$archive_root"
+    for index in "${!component_data_dirs[@]}"; do
+      data_dir="${component_data_dirs[$index]}"
+      service="${component_services[$index]}"
+      if ! component_identity_exists "$data_dir"; then
+        continue
+      fi
+      container_ids="$("${docker_cli[@]}" ps -aq \
+        --filter "label=com.docker.compose.project.working_dir=$INSTALL_ROOT" \
+        --filter "label=com.docker.compose.service=$service")"
+      if [[ -n "$container_ids" ]]; then
+        # Replacement is an explicit operator action and must only be used
+        # after confirming the component is idle. Stop only this component;
+        # the Greenbone project and persistent feed/database volumes remain.
+        # shellcheck disable=SC2086
+        "${docker_cli[@]}" stop $container_ids >/dev/null
+      fi
+      "${as_root[@]}" mv "$data_dir" "$archive_root/$service"
+      "${as_root[@]}" install -d -o 10001 -g 10001 -m 0700 "$data_dir"
+    done
+    echo "Archived the previous component identity under $archive_root; GVM feed and database state were preserved." >&2
+  else
+    cat >&2 <<EOF
+An existing Argus component identity is already installed under $INSTALL_ROOT.
+It may belong to a different Assessment Environment, so this installer will not silently reuse it with a new deployment code.
+For an in-place image refresh, rerun with --reuse-existing-identity.
+After confirming no assessment or deep scan is active, rerun with --replace-identity to archive the old identity and register this host to the new environment.
+EOF
+    exit 7
+  fi
+elif [[ "$IDENTITY_MODE" == --reuse-existing-identity ]]; then
+  echo "No existing Argus component identity is available to reuse." >&2
+  exit 7
+fi
+
+"${as_root[@]}" install -d -m 0700 "$INSTALL_ROOT" "$INSTALL_ROOT/secrets" "$INSTALL_ROOT/data/node" "$INSTALL_ROOT/data/worker" "$INSTALL_ROOT/gvm"
+"${as_root[@]}" chown -R "$(id -u):$(id -g)" "$INSTALL_ROOT"
+"${as_root[@]}" chown -R 10001:10001 "$INSTALL_ROOT/secrets" "$INSTALL_ROOT/data"
 
 curl -fsSLo "$INSTALL_ROOT/release.env" "$RELEASE_BASE/release.env"
 curl -fsSLo "$INSTALL_ROOT/release.env.bundle.json" "$RELEASE_BASE/release.env.bundle.json"
@@ -39,10 +174,12 @@ for image in ARGUS_NODE_IMAGE ARGUS_VULNERABILITY_WORKER_IMAGE; do
   value="${!image:-}"; [[ "$value" == *@sha256:* ]] || { echo "$image must be digest pinned" >&2; exit 4; }
 done
 
-read -rsp "One-time deployment code: " bootstrap_code; echo
-[[ -n "$bootstrap_code" ]] || { echo "A deployment code is required." >&2; exit 2; }
-printf '%s' "$bootstrap_code" | sudo install -o 10001 -g 10001 -m 0600 /dev/stdin "$INSTALL_ROOT/secrets/bootstrap"
-unset bootstrap_code
+if [[ "$reuse_existing_identity" != true ]]; then
+  read -rsp "One-time deployment code: " bootstrap_code; echo
+  [[ -n "$bootstrap_code" ]] || { echo "A deployment code is required." >&2; exit 2; }
+  printf '%s' "$bootstrap_code" | "${as_root[@]}" install -o 10001 -g 10001 -m 0600 /dev/stdin "$INSTALL_ROOT/secrets/bootstrap"
+  unset bootstrap_code
+fi
 printf 'ARGUS_PLATFORM_URL=%s\nARGUS_NODE_IMAGE=%s\nARGUS_VULNERABILITY_WORKER_IMAGE=%s\n' "$PLATFORM_URL" "$ARGUS_NODE_IMAGE" "$ARGUS_VULNERABILITY_WORKER_IMAGE" > "$INSTALL_ROOT/runtime.env"
 
 compose_name=core.yml
@@ -53,13 +190,31 @@ curl -fsSLo "$INSTALL_ROOT/compose.yml" "$RELEASE_BASE/$compose_name"
 if [[ "$ROLE" != node ]]; then
   read -rsp "GVM admin password configured for this scanner: " gvm_password; echo
   [[ -n "$gvm_password" ]] || { echo "The GVM password is required." >&2; exit 2; }
-  printf '%s' "$gvm_password" | sudo install -o 10001 -g 10001 -m 0600 /dev/stdin "$INSTALL_ROOT/secrets/gvm_password"
+  printf '%s' "$gvm_password" | "${as_root[@]}" install -o 10001 -g 10001 -m 0600 /dev/stdin "$INSTALL_ROOT/secrets/gvm_password"
   unset gvm_password
   [[ "${GVM_COMPOSE_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] || { echo "signed release lacks a GVM manifest digest" >&2; exit 4; }
   curl -fsSLo "$INSTALL_ROOT/gvm/compose.yml" "$GVM_COMPOSE_URL"
   printf '%s  %s\n' "$GVM_COMPOSE_SHA256" "$INSTALL_ROOT/gvm/compose.yml" | sha256sum -c -
-  docker compose -p greenbone-community-edition -f "$INSTALL_ROOT/gvm/compose.yml" up -d
+  "${docker_compose[@]}" -p greenbone-community-edition -f "$INSTALL_ROOT/gvm/compose.yml" up -d
+  gvmd_container=""
+  gvmd_health=""
+  for _ in $(seq 1 180); do
+    gvmd_container="$("${docker_compose[@]}" -p greenbone-community-edition -f "$INSTALL_ROOT/gvm/compose.yml" ps -q gvmd)"
+    if [[ -n "$gvmd_container" ]]; then
+      gvmd_health="$("${docker_cli[@]}" inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$gvmd_container")"
+      [[ "$gvmd_health" == healthy ]] && break
+    fi
+    sleep 5
+  done
+  [[ "$gvmd_health" == healthy ]] || { echo "The GVM manager did not become healthy." >&2; exit 6; }
+  # Some gvmd images contain symlinked runtime paths that make `docker cp`
+  # reject even an unrelated /tmp destination. Stream the protected host file
+  # over stdin instead; the password never enters the host command line or a
+  # temporary container file.
+  "${as_root[@]}" cat "$INSTALL_ROOT/secrets/gvm_password" \
+    | "${docker_cli[@]}" exec -i -u gvmd "$gvmd_container" sh -c \
+      'pw=$(cat); exec gvmd --user=admin --new-password="$pw"' >/dev/null
 fi
 
-docker compose --env-file "$INSTALL_ROOT/runtime.env" -f "$INSTALL_ROOT/compose.yml" up -d
+"${docker_compose[@]}" --env-file "$INSTALL_ROOT/runtime.env" -f "$INSTALL_ROOT/compose.yml" up -d
 echo "Argus ${ROLE} deployment started. The one-time code file is removed automatically after registration."
