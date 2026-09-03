@@ -2,7 +2,7 @@ services:
   node:
     image: ${ARGUS_NODE_IMAGE}
     network_mode: host
-    cap_add: [NET_RAW]
+    cap_add: [NET_RAW, NET_BIND_SERVICE]
     environment:
       ARGUS_BACKEND_URL: ${ARGUS_PLATFORM_URL}/api
       ARGUS_BOOTSTRAP_TOKEN_FILE: /run/secrets/bootstrap
