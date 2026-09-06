@@ -20,6 +20,16 @@ if (( EUID != 0 )); then
   as_root=(sudo)
 fi
 
+# The portal command normally launches this installer through sudo. Preserve
+# the invoking operator as the owner of compose and release files while the
+# container-owned secrets and state remain restricted to UID/GID 10001.
+operator_uid="${SUDO_UID:-$(id -u)}"
+operator_gid="${SUDO_GID:-$(id -g)}"
+[[ "$operator_uid" =~ ^[0-9]+$ && "$operator_gid" =~ ^[0-9]+$ ]] || {
+  echo "Could not determine the invoking operator's numeric UID/GID." >&2
+  exit 5
+}
+
 PLATFORM_URL="${ARGUS_PLATFORM_URL:-__ARGUS_PLATFORM_URL__}"
 RELEASE_BASE="${ARGUS_RELEASE_BASE_URL:-__ARGUS_RELEASE_BASE_URL__}"
 INSTALL_ROOT="${ARGUS_INSTALL_ROOT:-/opt/argus-customer}"
@@ -158,7 +168,7 @@ elif [[ "$IDENTITY_MODE" == --reuse-existing-identity ]]; then
 fi
 
 "${as_root[@]}" install -d -m 0700 "$INSTALL_ROOT" "$INSTALL_ROOT/secrets" "$INSTALL_ROOT/data/node" "$INSTALL_ROOT/data/worker" "$INSTALL_ROOT/gvm"
-"${as_root[@]}" chown -R "$(id -u):$(id -g)" "$INSTALL_ROOT"
+"${as_root[@]}" chown -R "$operator_uid:$operator_gid" "$INSTALL_ROOT"
 "${as_root[@]}" chown -R 10001:10001 "$INSTALL_ROOT/secrets" "$INSTALL_ROOT/data"
 
 curl -fsSLo "$INSTALL_ROOT/release.env" "$RELEASE_BASE/release.env"
