@@ -139,7 +139,8 @@ if [[ "$existing_identity" == true ]]; then
         "${docker_cli[@]}" stop $container_ids >/dev/null
       fi
       "${as_root[@]}" mv "$data_dir" "$archive_root/$service"
-      "${as_root[@]}" install -d -o 10001 -g 10001 -m 0700 "$data_dir"
+      "${as_root[@]}" install -d -m 0700 "$data_dir"
+      "${as_root[@]}" chown 10001:10001 "$data_dir"
     done
     echo "Archived the previous component identity under $archive_root; GVM feed and database state were preserved." >&2
   else
@@ -178,7 +179,8 @@ done
 if [[ "$reuse_existing_identity" != true ]]; then
   read -rsp "One-time deployment code: " bootstrap_code; echo
   [[ -n "$bootstrap_code" ]] || { echo "A deployment code is required." >&2; exit 2; }
-  printf '%s' "$bootstrap_code" | "${as_root[@]}" install -o 10001 -g 10001 -m 0600 /dev/stdin "$INSTALL_ROOT/secrets/bootstrap"
+  printf '%s' "$bootstrap_code" | "${as_root[@]}" install -m 0600 /dev/stdin "$INSTALL_ROOT/secrets/bootstrap"
+  "${as_root[@]}" chown 10001:10001 "$INSTALL_ROOT/secrets/bootstrap"
   unset bootstrap_code
 fi
 printf 'ARGUS_PLATFORM_URL=%s\nARGUS_RELEASE_VERSION=%s\nARGUS_NODE_IMAGE=%s\nARGUS_VULNERABILITY_WORKER_IMAGE=%s\n' "$PLATFORM_URL" "$ARGUS_RELEASE_VERSION" "$ARGUS_NODE_IMAGE" "$ARGUS_VULNERABILITY_WORKER_IMAGE" > "$INSTALL_ROOT/runtime.env"
@@ -191,7 +193,8 @@ curl -fsSLo "$INSTALL_ROOT/compose.yml" "$RELEASE_BASE/$compose_name"
 if [[ "$ROLE" != node ]]; then
   read -rsp "GVM admin password configured for this scanner: " gvm_password; echo
   [[ -n "$gvm_password" ]] || { echo "The GVM password is required." >&2; exit 2; }
-  printf '%s' "$gvm_password" | "${as_root[@]}" install -o 10001 -g 10001 -m 0600 /dev/stdin "$INSTALL_ROOT/secrets/gvm_password"
+  printf '%s' "$gvm_password" | "${as_root[@]}" install -m 0600 /dev/stdin "$INSTALL_ROOT/secrets/gvm_password"
+  "${as_root[@]}" chown 10001:10001 "$INSTALL_ROOT/secrets/gvm_password"
   unset gvm_password
   [[ "${GVM_COMPOSE_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] || { echo "signed release lacks a GVM manifest digest" >&2; exit 4; }
   curl -fsSLo "$INSTALL_ROOT/gvm/compose.yml" "$GVM_COMPOSE_URL"
