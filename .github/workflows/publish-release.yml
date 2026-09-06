@@ -21,6 +21,7 @@ jobs:
         shell: bash
         run: |
           [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          grep -Fx "ARGUS_RELEASE_VERSION=${GITHUB_REF_NAME#v}" release.env
           grep -Fx "GVM_COMPOSE_URL=https://github.com/ArgusAISecurity/argus-releases/releases/download/$GITHUB_REF_NAME/gvm-compose.pinned.yml" release.env
           grep -Eq '^ARGUS_NODE_IMAGE=ghcr\.io/argusaisecurity/argus-node@sha256:[0-9a-f]{64}$' release.env
           grep -Eq '^ARGUS_VULNERABILITY_WORKER_IMAGE=ghcr\.io/argusaisecurity/argus-vulnerability-worker@sha256:[0-9a-f]{64}$' release.env

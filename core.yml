@@ -8,6 +8,8 @@ services:
       ARGUS_BOOTSTRAP_TOKEN_FILE: /run/secrets/bootstrap
       ARGUS_NODE_MODE: real
       ARGUS_NODE_IDENTITY_PATH: /data/node_identity.json
+      ARGUS_RELEASE_VERSION: ${ARGUS_RELEASE_VERSION}
+      ARGUS_NODE_IMAGE_REFERENCE: ${ARGUS_NODE_IMAGE}
     volumes:
       - ./secrets:/run/secrets
       - ./data/node:/data

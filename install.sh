@@ -170,6 +170,7 @@ if ! command -v cosign >/dev/null; then
 else COSIGN="$(command -v cosign)"; fi
 "$COSIGN" verify-blob --bundle "$INSTALL_ROOT/release.env.bundle.json" --certificate-identity-regexp '^https://github\.com/ArgusAISecurity/argus-releases/\.github/workflows/publish-release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$' --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' "$INSTALL_ROOT/release.env"
 set -a; source "$INSTALL_ROOT/release.env"; set +a
+[[ "${ARGUS_RELEASE_VERSION:-}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "signed release lacks a valid ARGUS_RELEASE_VERSION" >&2; exit 4; }
 for image in ARGUS_NODE_IMAGE ARGUS_VULNERABILITY_WORKER_IMAGE; do
   value="${!image:-}"; [[ "$value" == *@sha256:* ]] || { echo "$image must be digest pinned" >&2; exit 4; }
 done
@@ -180,7 +181,7 @@ if [[ "$reuse_existing_identity" != true ]]; then
   printf '%s' "$bootstrap_code" | "${as_root[@]}" install -o 10001 -g 10001 -m 0600 /dev/stdin "$INSTALL_ROOT/secrets/bootstrap"
   unset bootstrap_code
 fi
-printf 'ARGUS_PLATFORM_URL=%s\nARGUS_NODE_IMAGE=%s\nARGUS_VULNERABILITY_WORKER_IMAGE=%s\n' "$PLATFORM_URL" "$ARGUS_NODE_IMAGE" "$ARGUS_VULNERABILITY_WORKER_IMAGE" > "$INSTALL_ROOT/runtime.env"
+printf 'ARGUS_PLATFORM_URL=%s\nARGUS_RELEASE_VERSION=%s\nARGUS_NODE_IMAGE=%s\nARGUS_VULNERABILITY_WORKER_IMAGE=%s\n' "$PLATFORM_URL" "$ARGUS_RELEASE_VERSION" "$ARGUS_NODE_IMAGE" "$ARGUS_VULNERABILITY_WORKER_IMAGE" > "$INSTALL_ROOT/runtime.env"
 
 compose_name=core.yml
 if [[ "$ROLE" == compact ]]; then compose_name=compact.yml; fi
